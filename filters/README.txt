@@ -1,0 +1,3 @@
+Note that in the UAV model, the process noise covariance Q is time-varying and must be adaptively updated at each time step.
+
+Note that more efficient implementations of the EKF and REKF are available. We have provided a demo of an efficient EKF implementation for reference. The key point is to correctly formulate the measurement model under GPS-denied conditions. Please carefully check all routines if you intend to refer to this demo!

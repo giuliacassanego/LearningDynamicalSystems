@@ -1,0 +1,6 @@
+# Data and temporary files
+Data/mat/*.mat
+Data/mat/log_*/
+.DS_Store
+*.asv
+*.log
