@@ -17,7 +17,7 @@ f_sym = func_f(sym_x, sym_u, dt);
 h_sym = func_h(sym_x);
 
 % 3. Initialization
-T = 100; % Test on first 500 samples for speed (UKF symbolic is slow)
+T = 50; % Test on first 500 samples for speed (UKF symbolic is slow)
 dt_val = 1/Delta;
 
 % Initial State: [q; v; p; wb; ab]
@@ -73,14 +73,19 @@ fprintf('Running UKF (Simplified Sample)...\n');
 % (UKF implementation logic here, using the same loop structure)
 % For brevity, we focus on EKF first as requested by the provided implementation.
 
-% 5. Visualization
-figure;
-subplot(2,1,1);
-plot(t_sync(1:T), flow_v(1:T, 1), 'k.', 'DisplayName', 'Noisy Meas'); hold on;
-plot(t_sync(1:T), Xekf(5, 2:end+1), 'r', 'LineWidth', 2, 'DisplayName', 'EKF Estimate');
-ylabel('Vel X (m/s)'); title('EKF Velocity Estimation'); legend;
-
-subplot(2,1,2);
-plot(t_sync(1:T), dist_h(1:T), 'k.', 'DisplayName', 'Noisy Meas'); hold on;
-plot(t_sync(1:T), Xekf(10, 2:end+1), 'g', 'LineWidth', 2, 'DisplayName', 'EKF Estimate');
-ylabel('Height (m)'); title('EKF Height Estimation'); legend;
+% 5. Visualization (Corretta)
+figure('Name', 'EKF Performance', 'NumberTitle', 'off');
+% Velocità Body X
+subplot(2, 1, 1);
+plot(t_sync(1:T), flow_v(1:T, 1), 'k.', 'DisplayName', 'Misure Rumorose'); hold on;
+plot(t_sync(1:T), Xekf(5, 2:T+1), 'r', 'LineWidth', 2, 'DisplayName', 'Stima EKF');
+ylabel('Vel X (m/s)'); 
+title('Filtro di Kalman: Velocità Body X'); 
+legend('Location', 'best');
+% Altezza (Position Down)
+subplot(2, 1, 2);
+plot(t_sync(1:T), dist_h(1:T), 'k.', 'DisplayName', 'Misure Rumorose'); hold on;
+plot(t_sync(1:T), Xekf(10, 2:T+1), 'g', 'LineWidth', 2, 'DisplayName', 'Stima EKF');
+ylabel('Altezza (m)'); 
+title('Filtro di Kalman: Altezza'); 
+legend('Location', 'best');
