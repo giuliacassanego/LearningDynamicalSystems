@@ -5,7 +5,9 @@ function [z] = func_f(sym_x, sym_u, dt)
     % dt: sampling time
     
     xn = sym_x;
-    % Inputs minus biases
+    % Inputs (sym_u) are increments: dtheta (rad) and dv (m/s).
+    % The biases (sym_x 11:16) in this formulation are modeled directly as 
+    % increment biases (rad and m/s), so they are subtracted directly without * dt.
     dAng = sym_u(1:3) - sym_x(11:13);
     dVel = sym_u(4:6) - sym_x(14:16);
     

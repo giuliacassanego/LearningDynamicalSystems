@@ -1,7 +1,11 @@
 %% Task 3: EKF and UKF Testing on the Optical Flow Model
-%clear; clc; close all;
+clear; clc; close all;
 
 project_dir = fileparts(mfilename('fullpath'));
+filters_dir = fullfile(project_dir, '..', 'filters');
+addpath(project_dir);   % optical_flow_model.m
+addpath(filters_dir);   % func_f.m, func_h.m
+
 % 1. Load data
 data_path = fullfile(project_dir, '..', 'Data', 'mat', 'data_sync.mat');
 load(data_path);
@@ -25,11 +29,21 @@ x0 = [q_sync(1,:)'; gps_gt(1,1:3)'; gps_gt(1,4:6)'; zeros(3,1); zeros(3,1)];
 P0 = diag([1e-4*ones(4,1); 0.1*ones(3,1); 0.1*ones(3,1); 1e-6*ones(3,1); 1e-4*ones(3,1)]);
 
 % Noise Covariances
-B_mat = diag([1e-3*ones(4,1); 0.05*ones(3,1); 0.01*ones(3,1); 1e-7*ones(3,1); 1e-5*ones(3,1)]);
-D_mat = diag([0.1; 0.1; 0.05; 0.05]); % Noise on flow x/y, vd, altitude
+B_mat = diag([1e-3*ones(4,1); 0.2*ones(3,1); 0.01*ones(3,1); 1e-7*ones(3,1); 1e-5*ones(3,1)]);
+D_mat = diag([0.05; 0.05; 5.0; 0.3]); % [flow vbx | flow vby | baro vd | dist pd]
 
-% Measurement Vector y
-y_meas = [flow_v(1:T, 1:2), gps_gt(1:T, 3), dist_h(1:T)]';
+% Compute vertical velocity vd from barometer (GPS-free).
+% baro_h is Nx2: col 1 = altitude [m], col 2 = velocity already computed by sync_all_sensors.
+% In NED convention vd is positive downward; altitude is positive upward -> negate.
+% Smooth altitude first to reduce finite-difference noise.
+baro_h_smooth = movmean(baro_h(:,1), 20);          % smooth altitude column (Nx1)
+baro_vd       = -[0; diff(baro_h_smooth)] * Delta; % Nx1, m/s (NED down convention)
+
+% Measurement Vector y: [v_body_x; v_body_y; v_ned_z; p_d] -- fully GPS-free
+%   flow_v(:,1:2)  <- estimator_optical_flow (body frame)
+%   baro_vd        <- barometer altitude derivative (down velocity)
+%   dist_h         <- distance sensor (altitude)
+y_meas = [flow_v(1:T, 1:2), baro_vd(1:T), dist_h(1:T)]';
 
 % 4. Optimization: Convert Symbolic to Numeric Functions (CRITICAL for speed)
 fprintf('Optimizing symbolic functions (please wait a few seconds)...\n');
@@ -60,6 +74,8 @@ for i = 1:T
     K = V_pred * C' / (C * V_pred * C' + R);
     h_val = h_num(X_pred);
     Xekf(:,i+1) = X_pred + K * (y_meas(:,i) - h_val);
+    % Normalize quaternion to prevent norm drift corrupting R(q)
+    Xekf(1:4,i+1) = Xekf(1:4,i+1) / norm(Xekf(1:4,i+1));
     Vekf(:,:,i+1) = (eye(16) - K * C) * V_pred;
 end
 t_ekf = toc;
@@ -68,7 +84,7 @@ fprintf('EKF finished in %.4f seconds.\n', t_ekf);
 fprintf('Running UKF (Numerical)...\n');
 Xukf = zeros(16, T+1); Xukf(:,1) = x0;
 Vukf = zeros(16, 16, T+1); Vukf(:,:,1) = P0;
-n = 16; m = 4;
+n = 16; m = 4; % state dim = 16, measurement dim = 4
 alpha = 0.1; kapa = 3-n; beta = 2;
 lambda = alpha^2 * (n + kapa) - n;
 Wm = [lambda/(n+lambda), ones(1, 2*n)/(2*(n+lambda))];
@@ -92,8 +108,8 @@ for i = 1:T
     x_pred = sum(Wm .* sigma_x_pred, 2);
     P_pred = Q;
     for j = 1:2*n+1
-        diff = sigma_x_pred(:,j) - x_pred;
-        P_pred = P_pred + Wc(j) * (diff * diffMulti(diff)); % Custom mult for safety
+        diff_x_pred = sigma_x_pred(:,j) - x_pred;
+        P_pred = P_pred + Wc(j) * (diff_x_pred * diffMulti(diff_x_pred)); % Custom mult for safety
     end
     P_pred = (P_pred + P_pred')/2; % Enforce symmetry
 
@@ -120,6 +136,8 @@ for i = 1:T
     % 7. Final Update
     K = Pxy / Py;
     Xukf(:,i+1) = x_pred + K * (y_meas(:,i) - y_pred);
+    % Normalize quaternion to prevent norm drift corrupting R(q)
+    Xukf(1:4,i+1) = Xukf(1:4,i+1) / norm(Xukf(1:4,i+1));
     Vukf(:,:,i+1) = P_pred - K * Py * K';
     Vukf(:,:,i+1) = (Vukf(:,:,i+1) + Vukf(:,:,i+1)')/2; % Symmetry
 
@@ -133,20 +151,43 @@ function out = diffMulti(d)
 end
 
 % 6. Visualization
+% The filter estimates the full state without GPS.
+% We compare against gps_gt only as an EXTERNAL REFERENCE (not used by the filter).
 figure('Name', 'EKF vs UKF Performance', 'NumberTitle', 'off', 'Color', 'w');
 
-% Velocità Body X
-subplot(2, 1, 1);
-plot(t_sync(1:T), flow_v(1:T, 1), 'k.', 'DisplayName', 'Misure Rumorose'); hold on;
-plot(t_sync(1:T), Xekf(5, 2:T+1), 'r', 'LineWidth', 2, 'DisplayName', 'Stima EKF');
-plot(t_sync(1:T), Xukf(5, 2:T+1), 'b--', 'LineWidth', 2, 'DisplayName', 'Stima UKF');
-ylabel('Vel X (m/s)'); title('Velocity Body X: EKF vs UKF');
+% --- North Velocity: filter estimate vs GPS reference ---
+subplot(2, 2, 1);
+plot(t_sync(1:T), gps_gt(1:T, 1), 'k--', 'DisplayName', 'GPS ref (not used)'); hold on;
+plot(t_sync(1:T), Xekf(5, 2:T+1), 'r', 'LineWidth', 1.5, 'DisplayName', 'EKF estimate');
+plot(t_sync(1:T), Xukf(5, 2:T+1), 'b--', 'LineWidth', 1.5, 'DisplayName', 'UKF estimate');
+yaxis_label = 'v_N (m/s)'; ylabel(yaxis_label); title('North Velocity');
 grid on; legend('Location', 'best');
 
-% Altezza (Position Down)
-subplot(2, 1, 2);
-plot(t_sync(1:T), dist_h(1:T), 'k.', 'DisplayName', 'Misure Rumorose'); hold on;
-plot(t_sync(1:T), Xekf(10, 2:T+1), 'g', 'LineWidth', 2, 'DisplayName', 'Stima EKF');
-plot(t_sync(1:T), Xukf(10, 2:T+1), 'm--', 'LineWidth', 2, 'DisplayName', 'Stima UKF');
-ylabel('Altezza (m)'); title('Altezza: EKF vs UKF');
+% --- East Velocity: filter estimate vs GPS reference ---
+subplot(2, 2, 2);
+plot(t_sync(1:T), gps_gt(1:T, 2), 'k--', 'DisplayName', 'GPS ref (not used)'); hold on;
+plot(t_sync(1:T), Xekf(6, 2:T+1), 'r', 'LineWidth', 1.5, 'DisplayName', 'EKF estimate');
+plot(t_sync(1:T), Xukf(6, 2:T+1), 'b--', 'LineWidth', 1.5, 'DisplayName', 'UKF estimate');
+yaxis_label = 'v_E (m/s)'; ylabel(yaxis_label); title('East Velocity');
 grid on; legend('Location', 'best');
+
+% --- Altitude: filter estimate vs distance sensor measurement ---
+subplot(2, 2, 3);
+plot(t_sync(1:T), dist_h(1:T), 'k.', 'MarkerSize', 3, 'DisplayName', 'Dist sensor (noisy)'); hold on;
+plot(t_sync(1:T), Xekf(10, 2:T+1), 'r', 'LineWidth', 1.5, 'DisplayName', 'EKF estimate');
+plot(t_sync(1:T), Xukf(10, 2:T+1), 'b--', 'LineWidth', 1.5, 'DisplayName', 'UKF estimate');
+yaxis_label = 'p_d (m)'; ylabel(yaxis_label); title('Altitude (Position Down)');
+grid on; legend('Location', 'best');
+
+% --- Down Velocity: barometer-derived measurement vs filter estimate vs GPS reference ---
+% baro_vd is the GPS-free measurement of vd used by the filter.
+% GPS is shown only as external reference to evaluate estimation quality.
+subplot(2, 2, 4);
+plot(t_sync(1:T), baro_vd(1:T), 'k.', 'MarkerSize', 2, 'DisplayName', 'Baro vd (noisy)'); hold on;
+plot(t_sync(1:T), gps_gt(1:T, 3), 'k--', 'LineWidth', 1, 'DisplayName', 'GPS ref (not used)');
+plot(t_sync(1:T), Xekf(7, 2:T+1), 'r', 'LineWidth', 1.5, 'DisplayName', 'EKF estimate');
+plot(t_sync(1:T), Xukf(7, 2:T+1), 'b--', 'LineWidth', 1.5, 'DisplayName', 'UKF estimate');
+ylabel('v_D (m/s)'); title('Down Velocity (Barometer-derived)');
+grid on; legend('Location', 'best');
+
+sgtitle('Task 3: EKF vs UKF — GPS-Free Navigation with Optical Flow');

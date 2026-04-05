@@ -2,8 +2,10 @@
 clear; clc; close all;
 
 % 1. Load synchronized data
-% Path to data_sync.mat (adjust if necessary)
-data_path = '../Data/mat/data_sync.mat';
+% Build absolute path from the script's own directory (works regardless of MATLAB CWD)
+project_dir = fileparts(mfilename('fullpath'));
+addpath(project_dir);  % Ensure optical_flow_model.m is on the path
+data_path = fullfile(project_dir, '..', 'Data', 'mat', 'data_sync.mat');
 
 if ~exist(data_path, 'file')
     error('Please run Data/mat/DATA_PROCESS.m first to generate data_sync.mat');
@@ -14,14 +16,15 @@ load(data_path);
 
 % 2. Initialization
 N = length(t_sync);
-y_pred = zeros(N, 4);
-y_real = zeros(N, 4);
+y_pred = zeros(N, 2);  % Only v_body_x and v_body_y
+y_real = zeros(N, 2);
 
-% Prepare real data for comparison
-% y_real = [v_body_x; v_body_y; v_ned_z; pos_ned_z]
-y_real(:, 1:2) = flow_v(:, 1:2); % Body frame velocities from flow sensor
-y_real(:, 3)   = gps_gt(:, 3);   % Down velocity from GPS
-y_real(:, 4)   = dist_h;         % Height from distance sensor (as p_d)
+% Real measurements: body frame velocities from optical flow sensor
+% Source: estimator_optical_flow (columns 1-2 are body frame vx, vy)
+% These are the only outputs of h(x) that can be validated without GPS,
+% since the optical flow sensor does not measure vertical velocity or position.
+y_real(:, 1) = flow_v(:, 1); % v_body_x from optical flow sensor
+y_real(:, 2) = flow_v(:, 2); % v_body_y from optical flow sensor
 
 fprintf('Running verification loop for %d samples...\n', N);
 
@@ -29,19 +32,29 @@ fprintf('Running verification loop for %d samples...\n', N);
 for k = 1:N
     % Construct state vector x
     % Format: [q0,q1,q2,q3, vn,ve,vd, pn,pe,pd, wb_x,wb_y,wb_z, ab_x,ab_y,ab_z]
-    
-    q = q_sync(k, :)';       % Quaternions from attitude log
-    v_ned = gps_gt(k, 1:3)'; % Velocity NED
-    p_ned = gps_gt(k, 4:6)'; % Position NED
-    
-    % Biases are assumed 0 for verification of the kinematic model
+
+    % Quaternions from attitude log (no GPS)
+    q = q_sync(k, :)';
+
+    % NED horizontal velocities from estimator_optical_flow (no GPS).
+    % flow_v(:,3:4) = vn, ve estimated by PX4 EKF using optical flow data.
+    % vd (down velocity) is not observable from optical flow -> set to 0.
+    v_ned = [flow_v(k, 3); flow_v(k, 4); 0];
+
+    % Position: not used by h(x) for v_body_x/y, set to zero.
+    p_ned = zeros(3, 1);
+
+    % Biases assumed 0 for kinematic verification
     wb = zeros(3, 1);
     ab = zeros(3, 1);
-    
+
     x = [q; v_ned; p_ned; wb; ab];
-    
-    % Model prediction
-    y_pred(k, :) = optical_flow_model(x)';
+
+    % Model prediction - take only v_body_x and v_body_y (outputs 1 and 2)
+    % v_ned_z and p_d are excluded: they are not measurable by optical flow
+    % and will instead be estimated by the EKF/UKF in Task 3.
+    y_full = optical_flow_model(x);
+    y_pred(k, :) = y_full(1:2)';
 end
 
 % 4. Error Calculation (RMSE)
@@ -49,42 +62,26 @@ rmse = sqrt(mean((y_real - y_pred).^2));
 fprintf('\nRoot Mean Square Error (RMSE):\n');
 fprintf('  v_body_x: %.4f m/s\n', rmse(1));
 fprintf('  v_body_y: %.4f m/s\n', rmse(2));
-fprintf('  v_ned_z:  %.4f m/s\n', rmse(3));
-fprintf('  p_d:      %.4f m\n', rmse(4));
 
 % 5. Visualization
 figure('Name', 'Optical Flow Model Verification', 'NumberTitle', 'off');
 
 % Velocity Body X
-subplot(2, 2, 1);
-plot(t_sync, y_real(:, 1), 'b', 'DisplayName', 'Real (Flow Sensor)'); hold on;
-plot(t_sync, y_pred(:, 1), 'r--', 'DisplayName', 'Model Prediction');
+subplot(2, 1, 1);
+plot(t_sync, y_real(:, 1), 'b', 'DisplayName', 'Real (estimator\_optical\_flow)'); hold on;
+plot(t_sync, y_pred(:, 1), 'r--', 'DisplayName', 'Model Prediction h(x)');
 xlabel('Time (s)'); ylabel('v_x (m/s)');
 title('Body Velocity X');
 legend('Location', 'best');
+grid on;
 
 % Velocity Body Y
-subplot(2, 2, 2);
-plot(t_sync, y_real(:, 2), 'b', 'DisplayName', 'Real (Flow Sensor)'); hold on;
-plot(t_sync, y_pred(:, 2), 'r--', 'DisplayName', 'Model Prediction');
+subplot(2, 1, 2);
+plot(t_sync, y_real(:, 2), 'b', 'DisplayName', 'Real (estimator\_optical\_flow)'); hold on;
+plot(t_sync, y_pred(:, 2), 'r--', 'DisplayName', 'Model Prediction h(x)');
 xlabel('Time (s)'); ylabel('v_y (m/s)');
 title('Body Velocity Y');
 legend('Location', 'best');
+grid on;
 
-% Velocity NED Z (Down)
-subplot(2, 2, 3);
-plot(t_sync, y_real(:, 3), 'b', 'DisplayName', 'Real (GPS)'); hold on;
-plot(t_sync, y_pred(:, 3), 'r--', 'DisplayName', 'Model Prediction');
-xlabel('Time (s)'); ylabel('v_z (m/s)');
-title('NED Velocity Down');
-legend('Location', 'best');
-
-% Position NED Z (Down)
-subplot(2, 2, 4);
-plot(t_sync, y_real(:, 4), 'b', 'DisplayName', 'Real (Dist Sensor)'); hold on;
-plot(t_sync, y_pred(:, 4), 'r--', 'DisplayName', 'Model Prediction');
-xlabel('Time (s)'); ylabel('p_d (m)');
-title('Position Down (Height)');
-legend('Location', 'best');
-
-sgtitle('Comparison: Real Data vs Model Predictions');
+sgtitle('Task 2: Optical Flow Model Verification (GPS-Free)');
