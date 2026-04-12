@@ -44,9 +44,9 @@ function [Xukf, Vukf, th] = RUKF_fast(x0, y_meas, P0, Q, R, f_num, h_num, U, dt_
         u_i = U(:, i);
         
         % -----------------------------------------
-        % 1. MEASUREMENT UPDATE (from prediction)
+        % 1. MEASUREMENT UPDATE
         % -----------------------------------------
-        P_sqrt = chol((n + lambda) * V_pred(:,:,i))';
+        P_sqrt = chol((n + lambda) * V_pred(:,:,i))'; %cholesky decomposition
         sigma_x = [x_pred(:,i), x_pred(:,i) + P_sqrt, x_pred(:,i) - P_sqrt];
         
         sigma_y_pred = zeros(m, 2*n+1);
@@ -131,7 +131,7 @@ function [Xukf, Vukf, th] = RUKF_fast(x0, y_meas, P0, Q, R, f_num, h_num, U, dt_
         % Mathematically: (P^-1 - th*I)^-1 = P * (I - th*P)^-1
         V_pred_temp = P_pred_next / val_mat;
         
-        % SVD Projection to enforce strict positive-definiteness for chol()
+        % SVD Projection - introduced because of numerical problems (division by zero)
         [U_v, S_v, ~] = svd(V_pred_temp);
         S_v(S_v < 1e-10) = 1e-10;  % Floor eigenvalues
         V_pred(:,:,i+1) = U_v * S_v * U_v';

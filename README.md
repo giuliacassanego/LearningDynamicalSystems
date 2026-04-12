@@ -41,6 +41,14 @@ The project is organized into several sequential tasks located in the `project/`
   - We generated two separate robust scripts: **`REKF_fast.m`** and **`RUKF_fast.m`**, optimizing them.
   - **Matrix Fault Protection:** Calculating least-favorable bounding (Robust estimation by multiplying matrices natively shrinks them boundedly) exposed mathematical vulnerabilities to $10^{-16}$ float discrepancies causing `Matrix must be positive definite` closures (`chol()` explosions). We protected the filters by implementing strict SVD bounding constraints (`svd()`) and direct algebraic inverse avoidance ($V * (I - \theta V)^{-1}$), making the robust logic practically indestructible to numerical spikes.
 
+## 🎯 TODOs for Final Verification & Analysis
+
+The following components still require formal verification and analysis before the final report is compiled:
+
+- [ ] **Task 1 (Model Definition):** Verify and justify the mathematical formulation of the IMU state dynamics (`func_f.m`). Specifically, analyze why the equations use discrete increments instead of the continuous-time rates proposed in the course presentation.
+- [ ] **Tasks 3 & 4 (Filter Performance & Drift):** Conduct an in-depth analysis of the resulting velocities compared to the GPS Ground Truth. Investigate the causes behind the visible drifting behavior and justify whether this is a filter anomaly or a physical consequence of the sensors used.
+- [ ] **Task 3 & 4 (EKF vs UKF Comparison):** Provide a structured comparison between the results of the Extended and Unscented Kalman Filters to determine which is more robust for our specific non-linear setup.
+
 ## Data Handling
 
 To avoid uploading large datasets and logs:

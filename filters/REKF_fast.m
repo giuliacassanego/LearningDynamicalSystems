@@ -32,6 +32,7 @@ function [Xrekf, Vekf, th] = REKF_fast(x0, y_meas, P0, Q, R, f_num, f_jac_num, h
     th = zeros(1, T);
 
     for i = 1:T
+        i
         u_i = U(:, i);
         
         % --- PREDICTION ---

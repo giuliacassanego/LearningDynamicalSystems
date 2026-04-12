@@ -9,10 +9,10 @@ addpath(project_dir, filters_dir, utils_dir);
 % 1. Load the pre-processed synchronized data
 load('../Data/mat/data_sync.mat');
 
-T = 6000; % Simulation steps (4 seconds at 100Hz)
+T = 3000; % Simulation steps (4 seconds at 100Hz)
 dt_val = 1/Delta;
 
-% 2. Define Symbolic Vectors and Equations
+% 2. Define Symbolic Vectors and Equations - all the same as task3
 syms q0 q1 q2 q3 vn ve vd pn pe pd wbx wby wbz abx aby abz real
 syms d_thx d_thy d_thz dvx dvy dvz dt real
 

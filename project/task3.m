@@ -11,12 +11,12 @@ data_path = fullfile(project_dir, '..', 'Data', 'mat', 'data_sync.mat');
 load(data_path);
 
 % 2. Setup Symbolic Variables
-syms q0 q1 q2 q3 vn ve vd pn pe pd wbx wby wbz abx aby abz real
-syms dthx dthy dthz dvx dvy dvz dt real
+syms q0 q1 q2 q3 vn ve vd pn pe pd wbx wby wbz abx aby abz real % real to force the symbolic variables to be real
+syms dthx dthy dthz dvx dvy dvz dt real % dt to allow the possibility of changing the sampling frequency
 sym_x = [q0; q1; q2; q3; vn; ve; vd; pn; pe; pd; wbx; wby; wbz; abx; aby; abz];
 sym_u = [dthx; dthy; dthz; dvx; dvy; dvz];
 
-% Use the functions we implemented
+% functions for state and measurement model
 f_sym = func_f(sym_x, sym_u, dt);
 h_sym = func_h(sym_x);
 
@@ -32,21 +32,21 @@ P0 = diag([1e-4*ones(4,1); 0.1*ones(3,1); 0.1*ones(3,1); 1e-6*ones(3,1); 1e-4*on
 B_mat = diag([1e-3*ones(4,1); 0.2*ones(3,1); 0.01*ones(3,1); 1e-7*ones(3,1); 1e-5*ones(3,1)]);
 D_mat = diag([0.05; 0.05; 5.0; 0.3]); % [flow vbx | flow vby | baro vd | dist pd]
 
-% Compute vertical velocity vd from barometer (GPS-free).
+% Compute vertical velocity vd from barometer.
 % baro_h is Nx2: col 1 = altitude [m], col 2 = velocity already computed by sync_all_sensors.
 % In NED convention vd is positive downward; altitude is positive upward -> negate.
-% Smooth altitude first to reduce finite-difference noise.
+% Smooth altitude first to reduce finite-difference noise - non mi convince molto.
 baro_h_smooth = movmean(baro_h(:,1), 20);          % smooth altitude column (Nx1)
 baro_vd       = -[0; diff(baro_h_smooth)] * Delta; % Nx1, m/s (NED down convention)
 
-% Measurement Vector y: [v_body_x; v_body_y; v_ned_z; p_d] -- fully GPS-free
+% Measurement Vector y: [v_body_x; v_body_y; v_ned_z; p_d]
 %   flow_v(:,1:2)  <- estimator_optical_flow (body frame)
 %   baro_vd        <- barometer altitude derivative (down velocity)
 %   dist_h         <- distance sensor (altitude)
 y_meas = [flow_v(1:T, 1:2), baro_vd(1:T), dist_h(1:T)]';
 
-% 4. Optimization: Convert Symbolic to Numeric Functions (CRITICAL for speed)
-fprintf('Optimizing symbolic functions (please wait a few seconds)...\n');
+% 4. Optimization: Convert Symbolic to Numeric Functions
+fprintf('Optimizing symbolic functions...\n');
 f_num = matlabFunction(f_sym, 'Vars', {sym_x, sym_u, dt});
 h_num = matlabFunction(h_sym, 'Vars', {sym_x});
 
@@ -60,20 +60,20 @@ h_jac_num = matlabFunction(h_jac_sym, 'Vars', {sym_x});
 fprintf('Running EKF...\n');
 Xekf = zeros(16, T+1); Xekf(:,1) = x0;
 Vekf = zeros(16, 16, T+1); Vekf(:,:,1) = P0;
-Q = B_mat*B_mat'; R = D_mat*D_mat';
+Q = B_mat*B_mat'; R = D_mat*D_mat'; % process noise covariance and measurement noise covariance
 
 tic;
 for i = 1:T
     u_i = [dtheta(i,:)'; dv(i,:)'];
     % EKF Predict
-    X_pred = f_num(Xekf(:,i), u_i, dt_val);
-    A = f_jac_num(Xekf(:,i), u_i, dt_val);
-    V_pred = A * Vekf(:,:,i) * A' + Q;
+    X_pred = f_num(Xekf(:,i), u_i, dt_val); %prediction using state equation
+    A = f_jac_num(Xekf(:,i), u_i, dt_val); %Jacobian
+    V_pred = A * Vekf(:,:,i) * A' + Q; %covariance prediction
     % EKF Update
-    C = h_jac_num(X_pred);
-    K = V_pred * C' / (C * V_pred * C' + R);
-    h_val = h_num(X_pred);
-    Xekf(:,i+1) = X_pred + K * (y_meas(:,i) - h_val);
+    C = h_jac_num(X_pred); %Jacobian
+    K = V_pred * C' / (C * V_pred * C' + R); %Kalman gain
+    h_val = h_num(X_pred); %measurement prediction
+    Xekf(:,i+1) = X_pred + K * (y_meas(:,i) - h_val); %state update
     % Normalize quaternion to prevent norm drift corrupting R(q)
     Xekf(1:4,i+1) = Xekf(1:4,i+1) / norm(Xekf(1:4,i+1));
     Vekf(:,:,i+1) = (eye(16) - K * C) * V_pred;
